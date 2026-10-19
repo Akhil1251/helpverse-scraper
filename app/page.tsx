@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   Search,
   MapPin,
@@ -15,6 +15,9 @@ import {
   ChevronRight,
   Sliders,
   Radio,
+  Lock,
+  LogOut,
+  UserCheck,
 } from "lucide-react";
 import LocationTab from "@/components/LocationTab";
 import DataFieldsTab from "@/components/DataFieldsTab";
@@ -25,6 +28,7 @@ import PortalLoaderBadge from "@/components/PortalLoaderBadge";
 import WebsiteSplashLoader from "@/components/WebsiteSplashLoader";
 import LiveMapsInspectorModal from "@/components/LiveMapsInspectorModal";
 import ExhaustionNoticeModal, { ExhaustionNoticeData } from "@/components/ExhaustionNoticeModal";
+import LoginModal from "@/components/LoginModal";
 import * as XLSX from "xlsx";
 import { INDIA_LOCATIONS } from "@/data/locations";
 import {
@@ -44,6 +48,42 @@ export default function ScraperDashboard() {
   // Location State
   const [selectedState, setSelectedState] = useState("Uttar Pradesh");
   const [selectedCity, setSelectedCity] = useState("Noida");
+
+  // User Authentication State
+  const [currentUser, setCurrentUser] = useState<{ email: string; role: string } | null>(null);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+
+  // Check authentication on component mount
+  useEffect(() => {
+    const checkAuthStatus = async () => {
+      try {
+        const res = await fetch("/api/auth/check");
+        const data = await res.json();
+        if (data.authenticated && data.user) {
+          setCurrentUser(data.user);
+        } else {
+          setIsLoginModalOpen(true); // Mandatory lock on load!
+        }
+      } catch {
+        setIsLoginModalOpen(true);
+      } finally {
+        setIsAuthLoading(false);
+      }
+    };
+    checkAuthStatus();
+  }, []);
+
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch {
+      // ignore
+    } finally {
+      setCurrentUser(null);
+      setIsLoginModalOpen(true);
+    }
+  };
 
   // Lead Exhaustion Modal State
   const [exhaustionNotice, setExhaustionNotice] = useState<ExhaustionNoticeData | null>(null);
@@ -112,6 +152,12 @@ export default function ScraperDashboard() {
   };
 
   const startScraping = async () => {
+    if (!currentUser) {
+      setIsLoginModalOpen(true);
+      setErrorMessage("Unauthorized: Please log in with admin credentials to use the scraper.");
+      return;
+    }
+
     if (!keyword.trim()) {
       setErrorMessage("Please enter a search keyword (e.g., 'Chartered Consultant').");
       return;
@@ -276,6 +322,33 @@ export default function ScraperDashboard() {
               <ShieldCheck className="w-4 h-4 text-red-600" />
               <span>{antiBotSettings.useProxy ? "Proxy: Active" : "Anti-Bot Settings"}</span>
             </button>
+
+            {/* Admin User Authentication Badge & Action */}
+            {currentUser ? (
+              <div className="flex items-center gap-2 pl-2 border-l border-zinc-200">
+                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-zinc-100/90 text-zinc-800 text-xs font-semibold border border-zinc-200 shadow-2xs">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="font-mono text-[11px] truncate max-w-[140px] font-bold">
+                    {currentUser.email}
+                  </span>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  className="p-1.5 rounded-xl text-zinc-500 hover:text-red-600 hover:bg-red-50 border border-zinc-200/80 transition"
+                  title="Log out of Admin account"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setIsLoginModalOpen(true)}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-extrabold bg-red-600 hover:bg-red-700 text-white shadow-sm transition"
+              >
+                <Lock className="w-3.5 h-3.5" />
+                <span>Admin Login</span>
+              </button>
+            )}
 
             {leads.length > 0 && (
               <button
@@ -533,6 +606,19 @@ export default function ScraperDashboard() {
         onClose={() => setIsExhaustionModalOpen(false)}
         data={exhaustionNotice}
         onExportExcel={handleExportExcel}
+      />
+
+      {/* Mandatory Admin Login Modal */}
+      <LoginModal
+        isOpen={isLoginModalOpen}
+        onClose={() => {
+          if (currentUser) setIsLoginModalOpen(false);
+        }}
+        onSuccess={(user) => {
+          setCurrentUser(user);
+          setIsLoginModalOpen(false);
+          setErrorMessage(null);
+        }}
       />
     </div>
   );
