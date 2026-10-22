@@ -25,9 +25,13 @@ export async function POST(req: NextRequest) {
 
     const payload: ScrapeRequestPayload = await req.json();
 
-    if (!payload.keyword || !payload.state || !payload.city) {
+    const hasTargets =
+      (payload.targets && Array.isArray(payload.targets) && payload.targets.length > 0) ||
+      (payload.state && payload.city);
+
+    if (!payload.keyword || !hasTargets) {
       return new Response(
-        JSON.stringify({ error: "Keyword, State, and City are required fields." }),
+        JSON.stringify({ error: "Keyword and at least one target location (City & State) are required." }),
         { status: 400, headers: { "Content-Type": "application/json" } }
       );
     }

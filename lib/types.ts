@@ -71,10 +71,19 @@ export interface ExhaustionNoticeData {
   message: string;
 }
 
-export interface ScrapeRequestPayload {
-  keyword: string;
+export interface LocationTarget {
   state: string;
   city: string;
+}
+
+export interface ScrapeRequestPayload {
+  keyword: string;
+  // Multi-target location support
+  targets?: LocationTarget[];
+  limitPerCity?: number;
+  // Backward compatibility fields
+  state?: string;
+  city?: string;
   pincodes?: string[];
   selectedFields: FieldKey[];
   limit: number;

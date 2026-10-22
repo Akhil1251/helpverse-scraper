@@ -18,6 +18,8 @@ import {
   Lock,
   LogOut,
   UserCheck,
+  Globe,
+  FileSpreadsheet,
 } from "lucide-react";
 import LocationTab from "@/components/LocationTab";
 import DataFieldsTab from "@/components/DataFieldsTab";
@@ -30,12 +32,12 @@ import LiveMapsInspectorModal from "@/components/LiveMapsInspectorModal";
 import ExhaustionNoticeModal, { ExhaustionNoticeData } from "@/components/ExhaustionNoticeModal";
 import LoginModal from "@/components/LoginModal";
 import * as XLSX from "xlsx";
-import { INDIA_LOCATIONS } from "@/data/locations";
 import {
   FieldKey,
   ScrapedLead,
   AntiBotSettings,
   ScrapeRequestPayload,
+  LocationTarget,
 } from "@/lib/types";
 
 export default function ScraperDashboard() {
@@ -45,9 +47,16 @@ export default function ScraperDashboard() {
   // Active Tab: 'location' | 'fields'
   const [activeTab, setActiveTab] = useState<"location" | "fields">("location");
 
-  // Location State
-  const [selectedState, setSelectedState] = useState("Uttar Pradesh");
-  const [selectedCity, setSelectedCity] = useState("Noida");
+  // Multi-Location State (Multiple States and Multiple Cities)
+  const [selectedStates, setSelectedStates] = useState<string[]>(["Uttar Pradesh"]);
+  const [selectedCities, setSelectedCities] = useState<LocationTarget[]>([
+    { state: "Uttar Pradesh", city: "Noida" },
+  ]);
+  const [limitPerCity, setLimitPerCity] = useState<number>(100);
+
+  // Active City during scraping
+  const [activeCity, setActiveCity] = useState<string>("Noida");
+  const [activeState, setActiveState] = useState<string>("Uttar Pradesh");
 
   // User Authentication State
   const [currentUser, setCurrentUser] = useState<{ email: string; role: string } | null>(null);
@@ -100,7 +109,6 @@ export default function ScraperDashboard() {
   ]);
 
   // Scraping Controls
-  const [limit, setLimit] = useState(25);
   const [leads, setLeads] = useState<ScrapedLead[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string>("");
@@ -125,6 +133,9 @@ export default function ScraperDashboard() {
 
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  const totalCalculatedLimit = selectedCities.length * limitPerCity;
+
+  // Single-sheet export for all cities in one combined CSV/Excel
   const handleExportExcel = () => {
     if (leads.length === 0) return;
     const dataToExport = leads.map((lead) => {
@@ -141,14 +152,29 @@ export default function ScraperDashboard() {
       if (selectedFields.includes("reviewsCount")) row["Reviews Count"] = lead.reviewsCount || "";
       if (selectedFields.includes("fullAddress")) row["Full Address"] = lead.fullAddress || "";
       if (selectedFields.includes("category")) row["Category"] = lead.category || "";
+      if (selectedFields.includes("socials")) {
+        row["LinkedIn"] = lead.socials?.linkedin || "";
+        row["Instagram"] = lead.socials?.instagram || "";
+        row["Facebook"] = lead.socials?.facebook || "";
+      }
       if (selectedFields.includes("mapsUrl")) row["Google Maps Link"] = lead.mapsUrl || "";
       return row;
     });
 
     const worksheet = XLSX.utils.json_to_sheet(dataToExport);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Leads");
-    XLSX.writeFile(workbook, `Helpverse_Leads_${selectedCity}_${Date.now()}.xlsx`);
+    XLSX.utils.book_append_sheet(workbook, worksheet, "All Cities Leads");
+
+    const maxCols = Object.keys(dataToExport[0] || {}).map((key) => ({
+      wch: Math.max(key.length, 18),
+    }));
+    worksheet["!cols"] = maxCols;
+
+    const fileCityLabel =
+      selectedCities.length === 1
+        ? selectedCities[0].city
+        : `${selectedCities.length}_Cities`;
+    XLSX.writeFile(workbook, `Helpverse_Leads_${fileCityLabel}_${Date.now()}.xlsx`);
   };
 
   const startScraping = async () => {
@@ -163,21 +189,36 @@ export default function ScraperDashboard() {
       return;
     }
 
+    if (selectedCities.length === 0) {
+      setErrorMessage("Please select at least one City in the Location tab.");
+      setActiveTab("location");
+      return;
+    }
+
     setErrorMessage(null);
     setIsLoading(true);
-    setStatusMessage(`Connecting to Maps Scraper Engine for ${selectedCity}...`);
-    setProgressPercent(5);
-    setCurrentPincode(selectedCity);
+    const firstCity = selectedCities[0].city;
+    const firstState = selectedCities[0].state;
+    setActiveCity(firstCity);
+    setActiveState(firstState);
+    setCurrentPincode(firstCity);
+
+    setStatusMessage(
+      `Initializing multi-city scraper for ${selectedCities.length} locations (${limitPerCity} leads each)...`
+    );
+    setProgressPercent(3);
     setIsMapsInspectorOpen(true); // Automatically open the live Maps viewport window!
 
     abortControllerRef.current = new AbortController();
 
     const payload: ScrapeRequestPayload = {
       keyword: keyword.trim(),
-      state: selectedState,
-      city: selectedCity,
+      targets: selectedCities,
+      limitPerCity,
+      limit: totalCalculatedLimit,
+      state: firstState,
+      city: firstCity,
       selectedFields,
-      limit,
       antiBot: antiBotSettings,
     };
 
@@ -216,11 +257,15 @@ export default function ScraperDashboard() {
             if (event.type === "lead") {
               newLeadsBatch.unshift(event.data);
               setCurrentScrapingLead(event.data);
+              if (event.data.city) setActiveCity(event.data.city);
+              if (event.data.state) setActiveState(event.data.state);
             } else if (event.type === "status") {
               setStatusMessage(event.data.message);
               if (typeof event.data.progress === "number") {
                 setProgressPercent(event.data.progress);
               }
+              if (event.data.currentCity) setActiveCity(event.data.currentCity);
+              if (event.data.currentState) setActiveState(event.data.currentState);
               if (event.data.isDone) {
                 setIsLoading(false);
               }
@@ -229,6 +274,7 @@ export default function ScraperDashboard() {
               setIsExhaustionModalOpen(true);
             } else if (event.type === "info") {
               setStatusMessage(event.data.message);
+              if (event.data.currentCity) setActiveCity(event.data.currentCity);
               if (event.data.currentPincode) {
                 setCurrentPincode(event.data.currentPincode);
               }
@@ -290,11 +336,11 @@ export default function ScraperDashboard() {
                   Helpverse <span className="text-gradient-crimson">Maps Scraper</span>
                 </h1>
                 <span className="text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200/60">
-                  SaaS Pro
+                  Multi-City SaaS Pro
                 </span>
               </div>
               <p className="text-[11px] text-zinc-500 hidden sm:block font-medium">
-                Targeted B2B Maps Extractor & Automated Email Enrichment
+                Sequential Multi-City Maps Extractor & Automated Email Enrichment
               </p>
             </div>
           </div>
@@ -369,13 +415,14 @@ export default function ScraperDashboard() {
         <div className="space-y-1">
           <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-red-50 text-red-700 border border-red-200/60">
             <Sparkles className="w-3 h-3 text-red-600" />
-            <span>High-Speed Maps Lead Generator</span>
+            <span>High-Speed Multi-City Maps Pipeline</span>
           </div>
           <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-zinc-900">
-            Extract Verified Client Leads <span className="text-gradient-crimson">with Maps & Emails</span>
+            Extract Verified B2B Client Leads{" "}
+            <span className="text-gradient-crimson">Across Multiple Cities</span>
           </h2>
           <p className="text-xs sm:text-sm text-zinc-500 font-normal">
-            Choose state, city, and pincodes to micro-target local businesses with automatic email and phone enrichment.
+            Select multiple states and cities with custom limits per location. Runs city-by-city sequentially and streams all results into one unified Excel/CSV sheet.
           </p>
         </div>
 
@@ -402,55 +449,26 @@ export default function ScraperDashboard() {
             <SearchSubjectAutocomplete
               value={keyword}
               onChange={setKeyword}
-              placeholder="Search or pick from 200 subjects (e.g., Real estate brokers, NEET coaching, Dentists)..."
+              placeholder="Search or pick from 200 subjects (e.g., Real estate brokers, Chartered accountants, Dentists)..."
             />
 
-            {/* Limit Selector */}
-            <div className="flex items-center gap-2 bg-zinc-50/70 border border-zinc-200 rounded-xl px-3.5 py-2.5 shadow-2xs">
-              <span className="text-xs text-zinc-500 font-bold shrink-0">Limit:</span>
-              <select
-                value={limit >= 999999 ? "unlimited" : limit}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  if (val === "unlimited") {
-                    setLimit(999999);
-                  } else {
-                    setLimit(Number(val));
-                  }
-                }}
-                className="bg-transparent text-xs text-zinc-900 font-extrabold focus:outline-none cursor-pointer"
-              >
-                <option value={10}>10 Leads</option>
-                <option value={25}>25 Leads</option>
-                <option value={50}>50 Leads</option>
-                <option value={100}>100 Leads</option>
-                <option value={250}>250 Leads</option>
-                <option value={500}>500 Leads</option>
-                <option value={1000}>1,000 Leads</option>
-                <option value={2500}>2,500 Leads</option>
-                <option value={5000}>5,000 Leads</option>
-                <option value={10000}>10,000 Leads</option>
-                <option value="unlimited">Unlimited (∞</option>
-              </select>
-
-              {limit < 999999 && (
-                <input
-                  type="number"
-                  min="1"
-                  max="100000"
-                  value={limit}
-                  onChange={(e) => setLimit(Math.max(1, Number(e.target.value)))}
-                  className="w-16 px-1.5 py-0.5 text-xs text-center font-bold bg-white border border-zinc-300 rounded focus:outline-none focus:border-red-500"
-                  title="Or type exact number of leads"
-                />
-              )}
+            {/* Quota Summary Badge */}
+            <div className="flex items-center gap-2 bg-zinc-50/80 border border-zinc-200 rounded-xl px-3.5 py-2.5 shadow-2xs shrink-0">
+              <span className="text-xs text-zinc-500 font-bold shrink-0">Plan:</span>
+              <div className="text-xs font-black text-zinc-900 flex items-center gap-1.5">
+                <span className="text-red-600 font-extrabold">{selectedCities.length}</span> Cities ×
+                <span className="text-red-600 font-extrabold">{limitPerCity}</span> leads =
+                <span className="px-2 py-0.5 rounded-md bg-red-50 text-red-700 border border-red-200/60 font-mono">
+                  {totalCalculatedLimit.toLocaleString()} Leads
+                </span>
+              </div>
             </div>
 
             {/* Run / Stop Button */}
             {!isLoading ? (
               <button
                 onClick={startScraping}
-                className="flex items-center justify-center gap-2 px-7 py-3 rounded-xl bg-gradient-to-r from-red-600 via-rose-600 to-red-600 hover:from-red-700 hover:to-rose-700 text-white text-xs font-black tracking-wide uppercase transition shadow-md shadow-red-600/20 hover:scale-[1.01] active:scale-[0.99]"
+                className="flex items-center justify-center gap-2 px-7 py-3 rounded-xl bg-gradient-to-r from-red-600 via-rose-600 to-red-600 hover:from-red-700 hover:to-rose-700 text-white text-xs font-black tracking-wide uppercase transition shadow-md shadow-red-600/20 hover:scale-[1.01] active:scale-[0.99] shrink-0"
               >
                 <Play className="w-4 h-4 fill-white" />
                 Run Scraper
@@ -458,7 +476,7 @@ export default function ScraperDashboard() {
             ) : (
               <button
                 onClick={stopScraping}
-                className="flex items-center justify-center gap-2 px-7 py-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-black tracking-wide uppercase transition shadow-sm"
+                className="flex items-center justify-center gap-2 px-7 py-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-black tracking-wide uppercase transition shadow-sm shrink-0"
               >
                 <Square className="w-4 h-4 fill-white" />
                 Stop Scraper
@@ -506,9 +524,9 @@ export default function ScraperDashboard() {
                 }`}
               >
                 <MapPin className="w-3.5 h-3.5 text-red-600" />
-                <span>1. City & State Location</span>
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-red-50 text-red-700 border border-red-200/60">
-                  {selectedCity}, {selectedState}
+                <span>1. Multi-City & State Location</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-50 text-red-700 border border-red-200/60">
+                  {selectedCities.length} Cities Selected
                 </span>
               </button>
 
@@ -522,7 +540,7 @@ export default function ScraperDashboard() {
               >
                 <Layers className="w-3.5 h-3.5 text-red-600" />
                 <span>2. Data Fields Customizer</span>
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-red-50 text-red-700 border border-red-200/60">
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-50 text-red-700 border border-red-200/60">
                   {selectedFields.length} Columns
                 </span>
               </button>
@@ -537,10 +555,12 @@ export default function ScraperDashboard() {
           <div className="p-5">
             {activeTab === "location" ? (
               <LocationTab
-                selectedState={selectedState}
-                onStateChange={setSelectedState}
-                selectedCity={selectedCity}
-                onCityChange={setSelectedCity}
+                selectedStates={selectedStates}
+                onStatesChange={setSelectedStates}
+                selectedCities={selectedCities}
+                onCitiesChange={setSelectedCities}
+                limitPerCity={limitPerCity}
+                onLimitPerCityChange={setLimitPerCity}
               />
             ) : (
               <DataFieldsTab
@@ -559,12 +579,12 @@ export default function ScraperDashboard() {
               <div className="space-y-0.5">
                 <p className="text-xs font-bold text-zinc-900">{statusMessage || "Scraping in progress..."}</p>
                 <p className="text-[11px] text-zinc-500">
-                  Target: {keyword} across {selectedCity}, {selectedState} (Full City Coverage)
+                  Target: {keyword} across {selectedCities.length} cities ({limitPerCity} leads each) • Active: {activeCity}, {activeState}
                 </p>
               </div>
             </div>
-            <div className="text-xs font-mono text-red-700 font-extrabold bg-white px-3 py-1.5 rounded-lg border border-red-200 shadow-2xs">
-              {limit >= 999999 ? `${leads.length} Leads (Unlimited Mode)` : `${leads.length} / ${limit} Leads Gathered`}
+            <div className="text-xs font-mono text-red-700 font-extrabold bg-white px-3 py-1.5 rounded-lg border border-red-200 shadow-2xs shrink-0">
+              {leads.length} / {totalCalculatedLimit} Leads Gathered
             </div>
           </div>
         )}
@@ -593,8 +613,8 @@ export default function ScraperDashboard() {
         onClose={() => setIsMapsInspectorOpen(false)}
         isLoading={isLoading}
         keyword={keyword}
-        city={selectedCity}
-        state={selectedState}
+        city={activeCity}
+        state={activeState}
         currentPincode={currentPincode}
         currentScrapingLead={currentScrapingLead}
         scrapedLeads={leads}
