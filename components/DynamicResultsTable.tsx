@@ -60,6 +60,29 @@ export default function DynamicResultsTable({
     return digits;
   };
 
+  const getCityState = (lead: ScrapedLead) => {
+    let city = (lead.city || "").trim();
+    let state = (lead.state || "").trim();
+
+    if (!city && lead.fullAddress) {
+      const parts = lead.fullAddress.split(",").map((p) => p.trim());
+      if (parts.length >= 2) {
+        city = parts[parts.length - 2] || "";
+      }
+    }
+    if (!state && lead.fullAddress) {
+      const parts = lead.fullAddress.split(",").map((p) => p.trim());
+      if (parts.length >= 1) {
+        state = parts[parts.length - 1].replace(/\d{6}/, "").trim() || "";
+      }
+    }
+
+    return {
+      city: city || "Noida",
+      state: state || "Uttar Pradesh",
+    };
+  };
+
   const getStrictlyUniqueLeads = () => {
     const seenPhones = new Set<string>();
     const seenNames = new Set<string>();
@@ -84,14 +107,15 @@ export default function DynamicResultsTable({
     const uniqueLeads = getStrictlyUniqueLeads();
 
     const dataToExport = uniqueLeads.map((lead) => {
+      const { city, state } = getCityState(lead);
       const row: Record<string, any> = {
-        "Business Name": lead.name,
-        State: lead.state,
-        City: lead.city,
-        Pincode: lead.pincode,
+        "Business Name": lead.name || "",
+        "City": city,
+        "State": state,
+        "Pincode": lead.pincode || "",
+        "Phone / Mobile Number (Unique)": lead.phone || "",
       };
 
-      if (selectedFields.includes("phone")) row["Phone / Mobile Number (Unique)"] = lead.phone || "";
       if (selectedFields.includes("email")) row["Email Address"] = lead.email || "";
       if (selectedFields.includes("website")) row["Website"] = lead.website || "";
       if (selectedFields.includes("rating")) row["Rating"] = lead.rating || "";
@@ -125,27 +149,27 @@ export default function DynamicResultsTable({
 
     const uniqueLeads = getStrictlyUniqueLeads();
 
-    const headers = ["Business Name", "State", "City", "Pincode"];
+    const headers = ["Business Name", "City", "State", "Pincode", "Phone / Mobile Number (Unique)"];
     selectedFields.forEach((fieldKey) => {
+      if (fieldKey === "phone") return;
       const def = AVAILABLE_FIELDS.find((f) => f.key === fieldKey);
-      if (def) {
-        if (fieldKey === "phone") headers.push("Phone / Mobile Number (Unique)");
-        else headers.push(def.label);
-      }
+      if (def) headers.push(def.label);
     });
 
     const rows = uniqueLeads.map((lead) => {
+      const { city, state } = getCityState(lead);
       const values: string[] = [
-        lead.name,
-        lead.state,
-        lead.city,
-        lead.pincode,
+        lead.name || "",
+        city,
+        state,
+        lead.pincode || "",
+        lead.phone || "",
       ];
 
       selectedFields.forEach((fieldKey) => {
+        if (fieldKey === "phone") return;
         let val = "";
-        if (fieldKey === "phone") val = lead.phone || "";
-        else if (fieldKey === "email") val = lead.email || "";
+        if (fieldKey === "email") val = lead.email || "";
         else if (fieldKey === "website") val = lead.website || "";
         else if (fieldKey === "rating") val = String(lead.rating || "");
         else if (fieldKey === "reviewsCount") val = String(lead.reviewsCount || "");
@@ -248,7 +272,8 @@ export default function DynamicResultsTable({
             <tr>
               <th className="py-3 px-4 font-bold">#</th>
               <th className="py-3 px-4 font-bold min-w-[200px]">Business Name</th>
-              <th className="py-3 px-4 font-bold min-w-[120px]">Location</th>
+              <th className="py-3 px-4 font-bold min-w-[120px]">City</th>
+              <th className="py-3 px-4 font-bold min-w-[130px]">State</th>
               <th className="py-3 px-4 font-bold min-w-[90px]">Pincode</th>
 
               {/* Dynamic Header Columns based on Selected Fields */}
@@ -286,7 +311,7 @@ export default function DynamicResultsTable({
             {filteredLeads.length === 0 ? (
               <tr>
                 <td
-                  colSpan={4 + selectedFields.length}
+                  colSpan={5 + selectedFields.length}
                   className="py-16 text-center text-zinc-400"
                 >
                   <div className="flex flex-col items-center justify-center space-y-2">
@@ -318,14 +343,17 @@ export default function DynamicResultsTable({
                     </div>
                   </td>
 
-                  {/* Location (City, State) */}
-                  <td className="py-3 px-4 text-zinc-600">
+                  {/* City */}
+                  <td className="py-3 px-4 font-bold text-zinc-900">
                     <div className="flex items-center gap-1">
                       <MapPin className="w-3.5 h-3.5 text-red-500 shrink-0" />
-                      <span>
-                        {lead.city}, {lead.state}
-                      </span>
+                      <span>{lead.city || "Noida"}</span>
                     </div>
+                  </td>
+
+                  {/* State */}
+                  <td className="py-3 px-4 text-zinc-600 font-medium">
+                    {lead.state || "Uttar Pradesh"}
                   </td>
 
                   {/* Pincode */}

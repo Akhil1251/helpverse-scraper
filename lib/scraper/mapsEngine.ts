@@ -1,7 +1,11 @@
 import axios from "axios";
+import https from "https";
 import { ScrapedLead, ScrapeRequestPayload, LocationTarget } from "../types";
 import { crawlWebsiteForContacts } from "./websiteCrawler";
 import { INDIA_LOCATIONS } from "@/data/locations";
+
+// Reusable HTTP Keep-Alive agent to eliminate TLS connection re-handshake latency
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 50 });
 
 // Mapping of city to authentic Indian STD landline area code
 const CITY_STD_CODES: Record<string, string> = {
@@ -42,7 +46,7 @@ const CITY_STD_CODES: Record<string, string> = {
  */
 async function fetchRealGoogleMapsResults(
   query: string,
-  timeoutMs: number = 8000
+  timeoutMs: number = 7000
 ): Promise<Partial<ScrapedLead>[]> {
   try {
     const encodedQuery = encodeURIComponent(query);
@@ -55,6 +59,7 @@ async function fetchRealGoogleMapsResults(
         "Accept-Language": "en-US,en;q=0.9",
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       },
+      httpsAgent,
       timeout: timeoutMs,
     });
 
@@ -74,6 +79,7 @@ async function fetchRealGoogleMapsResults(
         Referer: "https://www.google.com/maps",
         "Accept-Language": "en-US,en;q=0.9",
       },
+      httpsAgent,
       timeout: timeoutMs,
     });
 
@@ -571,34 +577,37 @@ export async function* runMapsScraper(
         seenBusinessNames.add(normName);
         if (place.mapsUrl) seenPlaceUrls.add(place.mapsUrl);
 
+        const cityValue = targetCity ? targetCity.trim() : "Noida";
+        const stateValue = targetState ? targetState.trim() : "Uttar Pradesh";
+
         // Build verified lead with unique mobile-based ID
         const lead: ScrapedLead = {
           id: normPhone ? `phone_${normPhone}` : `lead_${Date.now()}_${totalYielded + 1}`,
           name: place.name,
-          state: targetState,
-          city: targetCity,
+          state: stateValue,
+          city: cityValue,
           pincode: place.pincode || cityPincodes[0] || "201301",
           phone: finalPhone,
           website: place.website || undefined,
           email: undefined,
           rating: place.rating || 4.8,
           reviewsCount: place.reviewsCount || Math.floor(20 + Math.random() * 180),
-          fullAddress: place.fullAddress || `${place.name}, ${targetCity}, ${targetState}`,
+          fullAddress: place.fullAddress || `${place.name}, ${cityValue}, ${stateValue}`,
           category: place.category || cleanKeyword,
           mapsUrl:
             place.mapsUrl ||
             `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-              `${place.name} ${targetCity}`
+              `${place.name} ${cityValue}`
             )}`,
           socials: {},
           emailVerified: false,
           status: "verified",
         };
 
-        // Deep email extraction from company website
+        // Quick email extraction from company website (capped at 400ms for high performance)
         if (shouldEnrichEmail && lead.website && antiBot?.deepEmailExtraction) {
           try {
-            const enriched = await crawlWebsiteForContacts(lead.website, antiBot.proxyUrl, 1500);
+            const enriched = await crawlWebsiteForContacts(lead.website, antiBot.proxyUrl, 400);
             if (enriched.email) {
               lead.email = enriched.email;
               lead.emailVerified = true;
@@ -624,7 +633,7 @@ export async function* runMapsScraper(
         totalYielded++;
         cityYielded++;
 
-        // Stream real lead into results
+        // Stream real lead into results immediately without lag
         yield {
           type: "lead",
           data: lead,
@@ -634,21 +643,16 @@ export async function* runMapsScraper(
         yield {
           type: "status",
           data: {
-            message: `[${tIdx + 1}/${targets.length}] ${targetCity}: Extracted ${cityYielded}/${limitPerCity} leads (Total: ${totalYielded}/${isUnlimited ? "Unlimited" : effectiveTotalLimit})`,
+            message: `[${tIdx + 1}/${targets.length}] ${cityValue}: Extracted ${cityYielded}/${limitPerCity} leads (Total: ${totalYielded}/${isUnlimited ? "Unlimited" : effectiveTotalLimit})`,
             progress: isUnlimited
               ? Math.min(95, Math.round(((tIdx + cityYielded / limitPerCity) / targets.length) * 100))
               : Math.min(100, Math.round((totalYielded / effectiveTotalLimit) * 100)),
             totalLimit: isUnlimited ? "Unlimited" : effectiveTotalLimit,
             yielded: totalYielded,
             cityYielded,
-            currentCity: targetCity,
+            currentCity: cityValue,
           },
         };
-
-        const paceDelay = effectiveTotalLimit > 100 ? 5 : 30;
-        if (paceDelay > 0) {
-          await new Promise((r) => setTimeout(r, paceDelay));
-        }
       }
     }
 

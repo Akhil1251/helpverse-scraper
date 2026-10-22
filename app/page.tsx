@@ -165,14 +165,38 @@ export default function ScraperDashboard() {
       return true;
     });
 
-    const dataToExport = uniqueLeads.map((lead) => {
-      const row: Record<string, any> = {
-        "Business Name": lead.name,
-        State: lead.state,
-        City: lead.city,
-        Pincode: lead.pincode,
+    const getCityState = (lead: ScrapedLead) => {
+      let city = (lead.city || "").trim();
+      let state = (lead.state || "").trim();
+
+      if (!city && lead.fullAddress) {
+        const parts = lead.fullAddress.split(",").map((p) => p.trim());
+        if (parts.length >= 2) {
+          city = parts[parts.length - 2] || "";
+        }
+      }
+      if (!state && lead.fullAddress) {
+        const parts = lead.fullAddress.split(",").map((p) => p.trim());
+        if (parts.length >= 1) {
+          state = parts[parts.length - 1].replace(/\d{6}/, "").trim() || "";
+        }
+      }
+
+      return {
+        city: city || selectedCities[0]?.city || "Noida",
+        state: state || selectedCities[0]?.state || "Uttar Pradesh",
       };
-      if (selectedFields.includes("phone")) row["Phone / Mobile Number (Unique)"] = lead.phone || "";
+    };
+
+    const dataToExport = uniqueLeads.map((lead) => {
+      const { city, state } = getCityState(lead);
+      const row: Record<string, any> = {
+        "Business Name": lead.name || "",
+        "City": city,
+        "State": state,
+        "Pincode": lead.pincode || "",
+        "Phone / Mobile Number (Unique)": lead.phone || "",
+      };
       if (selectedFields.includes("email")) row["Email Address"] = lead.email || "";
       if (selectedFields.includes("website")) row["Website"] = lead.website || "";
       if (selectedFields.includes("rating")) row["Rating"] = lead.rating || "";

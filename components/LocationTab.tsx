@@ -45,13 +45,16 @@ const POPULAR_STATES = [
 ];
 
 export default function LocationTab({
-  selectedStates,
+  selectedStates = ["Uttar Pradesh"],
   onStatesChange,
-  selectedCities,
+  selectedCities = [{ state: "Uttar Pradesh", city: "Noida" }],
   onCitiesChange,
-  limitPerCity,
+  limitPerCity = 100,
   onLimitPerCityChange,
 }: Props) {
+  const safeStates = Array.isArray(selectedStates) ? selectedStates : ["Uttar Pradesh"];
+  const safeCities = Array.isArray(selectedCities) ? selectedCities : [{ state: "Uttar Pradesh", city: "Noida" }];
+
   const [stateSearch, setStateSearch] = useState("");
   const [citySearch, setCitySearch] = useState("");
   const [collapsedStates, setCollapsedStates] = useState<Record<string, boolean>>({});
@@ -70,8 +73,8 @@ export default function LocationTab({
 
   // Available cities from the currently selected states
   const availableStatesData = useMemo(() => {
-    return INDIA_LOCATIONS.filter((s) => selectedStates.includes(s.state));
-  }, [selectedStates]);
+    return INDIA_LOCATIONS.filter((s) => safeStates.includes(s.state));
+  }, [safeStates]);
 
   // Total available cities count across selected states
   const totalAvailableCitiesCount = useMemo(() => {
@@ -80,22 +83,22 @@ export default function LocationTab({
 
   // Helper to toggle a single state
   const toggleState = (stateName: string) => {
-    if (selectedStates.includes(stateName)) {
+    if (safeStates.includes(stateName)) {
       // Remove state and remove its cities
-      const nextStates = selectedStates.filter((s) => s !== stateName);
-      const nextCities = selectedCities.filter((c) => c.state !== stateName);
+      const nextStates = safeStates.filter((s) => s !== stateName);
+      const nextCities = safeCities.filter((c) => c.state !== stateName);
       onStatesChange(nextStates);
       onCitiesChange(nextCities);
     } else {
       // Add state and automatically include its cities by default
-      const nextStates = [...selectedStates, stateName];
+      const nextStates = [...safeStates, stateName];
       const stateObj = INDIA_LOCATIONS.find((s) => s.state === stateName);
       const newCities = stateObj ? stateObj.cities.map((c) => ({ state: stateName, city: c.name })) : [];
       // Append only unique
-      const existingKeySet = new Set(selectedCities.map((c) => `${c.state}::${c.city}`));
+      const existingKeySet = new Set(safeCities.map((c) => `${c.state}::${c.city}`));
       const citiesToAdd = newCities.filter((c) => !existingKeySet.has(`${c.state}::${c.city}`));
       onStatesChange(nextStates);
-      onCitiesChange([...selectedCities, ...citiesToAdd]);
+      onCitiesChange([...safeCities, ...citiesToAdd]);
     }
   };
 
@@ -120,11 +123,11 @@ export default function LocationTab({
 
   // Helper to toggle a single city
   const toggleCity = (stateName: string, cityName: string) => {
-    const exists = selectedCities.some((c) => c.state === stateName && c.city === cityName);
+    const exists = safeCities.some((c) => c.state === stateName && c.city === cityName);
     if (exists) {
-      onCitiesChange(selectedCities.filter((c) => !(c.state === stateName && c.city === cityName)));
+      onCitiesChange(safeCities.filter((c) => !(c.state === stateName && c.city === cityName)));
     } else {
-      onCitiesChange([...selectedCities, { state: stateName, city: cityName }]);
+      onCitiesChange([...safeCities, { state: stateName, city: cityName }]);
     }
   };
 
@@ -149,25 +152,25 @@ export default function LocationTab({
     const stateObj = INDIA_LOCATIONS.find((s) => s.state === stateName);
     if (!stateObj) return;
 
-    const currentCitiesInState = selectedCities.filter((c) => c.state === stateName);
+    const currentCitiesInState = safeCities.filter((c) => c.state === stateName);
     const allStateCitiesCount = stateObj.cities.length;
 
     if (currentCitiesInState.length === allStateCitiesCount) {
       // Deselect all cities in this state
-      onCitiesChange(selectedCities.filter((c) => c.state !== stateName));
+      onCitiesChange(safeCities.filter((c) => c.state !== stateName));
     } else {
       // Select all cities in this state
       const stateTargetCities = stateObj.cities.map((c) => ({ state: stateName, city: c.name }));
-      const otherCities = selectedCities.filter((c) => c.state !== stateName);
+      const otherCities = safeCities.filter((c) => c.state !== stateName);
       onCitiesChange([...otherCities, ...stateTargetCities]);
     }
   };
 
   const isCitySelected = (stateName: string, cityName: string) => {
-    return selectedCities.some((c) => c.state === stateName && c.city === cityName);
+    return safeCities.some((c) => c.state === stateName && c.city === cityName);
   };
 
-  const totalCalculatedTarget = selectedCities.length * limitPerCity;
+  const totalCalculatedTarget = safeCities.length * limitPerCity;
 
   return (
     <div className="space-y-6">
@@ -184,7 +187,7 @@ export default function LocationTab({
                   1. Select States / Union Territories
                 </h3>
                 <span className="text-[11px] font-bold text-red-700 bg-red-50 px-2 py-0.5 rounded-full border border-red-200/60 font-mono">
-                  {selectedStates.length} / {INDIA_LOCATIONS.length} Selected
+                  {safeStates.length} / {INDIA_LOCATIONS.length} Selected
                 </span>
               </div>
               <p className="text-[11px] text-zinc-500">
@@ -203,7 +206,7 @@ export default function LocationTab({
               <CheckSquare className="w-3.5 h-3.5" />
               <span>Select All States ({INDIA_LOCATIONS.length})</span>
             </button>
-            {selectedStates.length > 0 && (
+            {safeStates.length > 0 && (
               <button
                 type="button"
                 onClick={handleClearStates}
@@ -222,7 +225,7 @@ export default function LocationTab({
             Quick Pick:
           </span>
           {POPULAR_STATES.map((st) => {
-            const isSelected = selectedStates.includes(st);
+            const isSelected = safeStates.includes(st);
             return (
               <button
                 key={st}
@@ -256,7 +259,7 @@ export default function LocationTab({
         {/* States Checkbox Grid */}
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 max-h-52 overflow-y-auto pr-1">
           {filteredStates.map((loc) => {
-            const isChecked = selectedStates.includes(loc.state);
+            const isChecked = safeStates.includes(loc.state);
             return (
               <div
                 key={loc.state}
@@ -301,7 +304,7 @@ export default function LocationTab({
                   2. Select Cities Across Chosen States
                 </h3>
                 <span className="text-[11px] font-bold text-red-700 bg-red-50 px-2.5 py-0.5 rounded-full border border-red-200/60 font-mono">
-                  {selectedCities.length} Cities Selected
+                  {safeCities.length} Cities Selected
                 </span>
               </div>
               <p className="text-[11px] text-zinc-500">
@@ -311,7 +314,7 @@ export default function LocationTab({
           </div>
 
           {/* Quick Action Buttons for Cities */}
-          {selectedStates.length > 0 && (
+          {safeStates.length > 0 && (
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -321,7 +324,7 @@ export default function LocationTab({
                 <CheckSquare className="w-3.5 h-3.5" />
                 <span>Select All Cities ({totalAvailableCitiesCount})</span>
               </button>
-              {selectedCities.length > 0 && (
+              {safeCities.length > 0 && (
                 <button
                   type="button"
                   onClick={handleClearCities}
@@ -334,7 +337,7 @@ export default function LocationTab({
           )}
         </div>
 
-        {selectedStates.length === 0 ? (
+        {safeStates.length === 0 ? (
           <div className="py-8 text-center text-zinc-400 bg-zinc-50/50 rounded-xl border border-dashed border-zinc-200">
             <Globe className="w-7 h-7 mx-auto text-zinc-300 mb-1.5" />
             <p className="text-xs font-semibold text-zinc-700">No State Selected</p>
@@ -364,7 +367,7 @@ export default function LocationTab({
                 );
                 if (citiesInState.length === 0) return null;
 
-                const selectedInThisState = selectedCities.filter((c) => c.state === stData.state);
+                const selectedInThisState = safeCities.filter((c) => c.state === stData.state);
                 const allSelected = selectedInThisState.length === stData.cities.length;
                 const isCollapsed = collapsedStates[stData.state] || false;
 
@@ -505,10 +508,10 @@ export default function LocationTab({
               Selected Locations
             </span>
             <p className="text-sm font-black text-zinc-900">
-              {selectedCities.length} Cities
+              {safeCities.length} Cities
             </p>
             <p className="text-[11px] text-zinc-500 truncate">
-              Across {selectedStates.length} States/UTs
+              Across {safeStates.length} States/UTs
             </p>
           </div>
 
@@ -540,13 +543,13 @@ export default function LocationTab({
         </div>
 
         {/* Step-by-Step Execution Sequence Indicator */}
-        {selectedCities.length > 0 && (
+        {safeCities.length > 0 && (
           <div className="p-3 bg-white/80 rounded-xl border border-zinc-200/60 text-xs flex flex-wrap items-center gap-2">
             <span className="font-bold text-zinc-500 text-[11px] flex items-center gap-1">
               <Navigation className="w-3 h-3 text-red-600" />
               Execution Order:
             </span>
-            {selectedCities.slice(0, 5).map((loc, idx) => (
+            {safeCities.slice(0, 5).map((loc, idx) => (
               <span
                 key={`${loc.state}-${loc.city}`}
                 className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-zinc-100 text-zinc-800 text-[11px] font-semibold"
@@ -555,9 +558,9 @@ export default function LocationTab({
                 <span>{loc.city}</span>
               </span>
             ))}
-            {selectedCities.length > 5 && (
+            {safeCities.length > 5 && (
               <span className="text-[11px] text-zinc-500 font-bold">
-                + {selectedCities.length - 5} more cities...
+                + {safeCities.length - 5} more cities...
               </span>
             )}
           </div>
