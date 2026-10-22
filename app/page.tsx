@@ -135,17 +135,44 @@ export default function ScraperDashboard() {
 
   const totalCalculatedLimit = selectedCities.length * limitPerCity;
 
-  // Single-sheet export for all cities in one combined CSV/Excel
+  // Normalizes phone numbers to standard 10-digit digits for unique ID checks
+  const normalizePhone = (phone?: string) => {
+    if (!phone) return "";
+    const digits = phone.replace(/\D/g, "");
+    if (digits.length === 12 && digits.startsWith("91")) return digits.slice(2);
+    if (digits.length === 11 && digits.startsWith("0")) return digits.slice(1);
+    return digits;
+  };
+
+  // Single-sheet export for all cities with 100% UNIQUE mobile numbers (no duplicates)
   const handleExportExcel = () => {
     if (leads.length === 0) return;
-    const dataToExport = leads.map((lead) => {
+
+    // Filter leads to strictly unique mobile numbers and business names
+    const seenPhones = new Set<string>();
+    const seenNames = new Set<string>();
+    const uniqueLeads = leads.filter((lead) => {
+      const normPhone = normalizePhone(lead.phone);
+      const normName = lead.name.toLowerCase().trim();
+
+      if (normPhone) {
+        if (seenPhones.has(normPhone)) return false;
+        seenPhones.add(normPhone);
+      } else {
+        if (seenNames.has(normName)) return false;
+        seenNames.add(normName);
+      }
+      return true;
+    });
+
+    const dataToExport = uniqueLeads.map((lead) => {
       const row: Record<string, any> = {
         "Business Name": lead.name,
         State: lead.state,
         City: lead.city,
         Pincode: lead.pincode,
       };
-      if (selectedFields.includes("phone")) row["Phone Number"] = lead.phone || "";
+      if (selectedFields.includes("phone")) row["Phone / Mobile Number (Unique)"] = lead.phone || "";
       if (selectedFields.includes("email")) row["Email Address"] = lead.email || "";
       if (selectedFields.includes("website")) row["Website"] = lead.website || "";
       if (selectedFields.includes("rating")) row["Rating"] = lead.rating || "";
@@ -163,7 +190,7 @@ export default function ScraperDashboard() {
 
     const worksheet = XLSX.utils.json_to_sheet(dataToExport);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "All Cities Leads");
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Unique Leads");
 
     const maxCols = Object.keys(dataToExport[0] || {}).map((key) => ({
       wch: Math.max(key.length, 18),
@@ -174,7 +201,7 @@ export default function ScraperDashboard() {
       selectedCities.length === 1
         ? selectedCities[0].city
         : `${selectedCities.length}_Cities`;
-    XLSX.writeFile(workbook, `Helpverse_Leads_${fileCityLabel}_${Date.now()}.xlsx`);
+    XLSX.writeFile(workbook, `Helpverse_Unique_Leads_${fileCityLabel}_${Date.now()}.xlsx`);
   };
 
   const startScraping = async () => {
@@ -288,7 +315,25 @@ export default function ScraperDashboard() {
         }
 
         if (newLeadsBatch.length > 0) {
-          setLeads((prev) => [...newLeadsBatch, ...prev]);
+          setLeads((prev) => {
+            const existingPhones = new Set(
+              prev.map((l) => normalizePhone(l.phone)).filter(Boolean)
+            );
+            const existingNames = new Set(prev.map((l) => l.name.toLowerCase().trim()));
+            const uniqueIncoming: ScrapedLead[] = [];
+
+            for (const lead of newLeadsBatch) {
+              const normPhone = normalizePhone(lead.phone);
+              const normName = lead.name.toLowerCase().trim();
+              if (normPhone && existingPhones.has(normPhone)) continue;
+              if (existingNames.has(normName)) continue;
+
+              if (normPhone) existingPhones.add(normPhone);
+              existingNames.add(normName);
+              uniqueIncoming.push(lead);
+            }
+            return [...uniqueIncoming, ...prev];
+          });
         }
       }
     } catch (err: any) {

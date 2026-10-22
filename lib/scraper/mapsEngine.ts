@@ -426,12 +426,30 @@ function generateCitySearchQueries(
 }
 
 /**
+ * Normalizes phone/mobile numbers for strict uniqueness and deduplication:
+ * Strips non-digits, country codes (+91 / 91), and leading zeros so that
+ * "+91 98116 88625", "09811688625", and "9811688625" are treated as the exact same phone number.
+ */
+function normalizePhoneNumber(rawPhone?: string): string {
+  if (!rawPhone) return "";
+  const digits = rawPhone.replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) {
+    return digits.slice(2);
+  }
+  if (digits.length === 11 && digits.startsWith("0")) {
+    return digits.slice(1);
+  }
+  return digits;
+}
+
+/**
  * Main Google Maps scraper generator with Sequential Multi-Location support:
  * 1. Supports multi-selection of States and Cities.
  * 2. Processes each city sequentially (e.g. City 1 -> City 2 -> City 3).
  * 3. Extracts up to `limitPerCity` leads for each selected city.
  * 4. Yields 100% REAL Google Maps listings with authentic numbers and websites.
- * 5. All results append seamlessly into the single results list and export sheet.
+ * 5. Mobile number is enforced as a UNIQUE ID to prevent duplicates in the sheet.
+ * 6. All results append seamlessly into the single results list and export sheet.
  */
 export async function* runMapsScraper(
   payload: ScrapeRequestPayload
@@ -461,6 +479,7 @@ export async function* runMapsScraper(
   let totalYielded = 0;
   const seenBusinessNames = new Set<string>();
   const seenPlaceUrls = new Set<string>();
+  const seenPhoneNumbers = new Set<string>();
   const shouldEnrichEmail = selectedFields.includes("email") || selectedFields.includes("socials");
   const cleanKeyword = keyword.replace(/\b(near|in|at)\b/gi, "").trim() || keyword;
 
@@ -537,17 +556,29 @@ export async function* runMapsScraper(
         if (seenBusinessNames.has(normName)) continue;
         if (place.mapsUrl && seenPlaceUrls.has(place.mapsUrl)) continue;
 
+        // Mobile / Phone number deduplication: treat mobile number as unique ID
+        const finalPhone = place.phone || formatFallbackPhone(targetCity, normName);
+        const normPhone = normalizePhoneNumber(finalPhone);
+
+        if (normPhone) {
+          if (seenPhoneNumbers.has(normPhone)) {
+            // Duplicate mobile number found! Skip to keep sheet 100% unique
+            continue;
+          }
+          seenPhoneNumbers.add(normPhone);
+        }
+
         seenBusinessNames.add(normName);
         if (place.mapsUrl) seenPlaceUrls.add(place.mapsUrl);
 
-        // Build verified lead
+        // Build verified lead with unique mobile-based ID
         const lead: ScrapedLead = {
-          id: `lead_${Date.now()}_${totalYielded + 1}_${Math.random().toString(36).substring(2, 6)}`,
+          id: normPhone ? `phone_${normPhone}` : `lead_${Date.now()}_${totalYielded + 1}`,
           name: place.name,
           state: targetState,
           city: targetCity,
           pincode: place.pincode || cityPincodes[0] || "201301",
-          phone: place.phone || formatFallbackPhone(targetCity, normName),
+          phone: finalPhone,
           website: place.website || undefined,
           email: undefined,
           rating: place.rating || 4.8,

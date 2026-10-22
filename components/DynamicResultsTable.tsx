@@ -52,10 +52,38 @@ export default function DynamicResultsTable({
     setTimeout(() => setCopiedText(null), 2000);
   };
 
+  const normalizePhone = (phone?: string) => {
+    if (!phone) return "";
+    const digits = phone.replace(/\D/g, "");
+    if (digits.length === 12 && digits.startsWith("91")) return digits.slice(2);
+    if (digits.length === 11 && digits.startsWith("0")) return digits.slice(1);
+    return digits;
+  };
+
+  const getStrictlyUniqueLeads = () => {
+    const seenPhones = new Set<string>();
+    const seenNames = new Set<string>();
+    return leads.filter((lead) => {
+      const normPhone = normalizePhone(lead.phone);
+      const normName = lead.name.toLowerCase().trim();
+
+      if (normPhone) {
+        if (seenPhones.has(normPhone)) return false;
+        seenPhones.add(normPhone);
+      } else {
+        if (seenNames.has(normName)) return false;
+        seenNames.add(normName);
+      }
+      return true;
+    });
+  };
+
   const exportToExcel = () => {
     if (leads.length === 0) return;
 
-    const dataToExport = leads.map((lead) => {
+    const uniqueLeads = getStrictlyUniqueLeads();
+
+    const dataToExport = uniqueLeads.map((lead) => {
       const row: Record<string, any> = {
         "Business Name": lead.name,
         State: lead.state,
@@ -63,7 +91,7 @@ export default function DynamicResultsTable({
         Pincode: lead.pincode,
       };
 
-      if (selectedFields.includes("phone")) row["Phone Number"] = lead.phone || "";
+      if (selectedFields.includes("phone")) row["Phone / Mobile Number (Unique)"] = lead.phone || "";
       if (selectedFields.includes("email")) row["Email Address"] = lead.email || "";
       if (selectedFields.includes("website")) row["Website"] = lead.website || "";
       if (selectedFields.includes("rating")) row["Rating"] = lead.rating || "";
@@ -82,26 +110,31 @@ export default function DynamicResultsTable({
 
     const worksheet = XLSX.utils.json_to_sheet(dataToExport);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Scraped Leads");
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Unique Leads");
 
     const maxCols = Object.keys(dataToExport[0] || {}).map((key) => ({
       wch: Math.max(key.length, 18),
     }));
     worksheet["!cols"] = maxCols;
 
-    XLSX.writeFile(workbook, `leads_export_${Date.now()}.xlsx`);
+    XLSX.writeFile(workbook, `leads_unique_export_${Date.now()}.xlsx`);
   };
 
   const exportToCsv = () => {
     if (leads.length === 0) return;
 
+    const uniqueLeads = getStrictlyUniqueLeads();
+
     const headers = ["Business Name", "State", "City", "Pincode"];
     selectedFields.forEach((fieldKey) => {
       const def = AVAILABLE_FIELDS.find((f) => f.key === fieldKey);
-      if (def) headers.push(def.label);
+      if (def) {
+        if (fieldKey === "phone") headers.push("Phone / Mobile Number (Unique)");
+        else headers.push(def.label);
+      }
     });
 
-    const rows = leads.map((lead) => {
+    const rows = uniqueLeads.map((lead) => {
       const values: string[] = [
         lead.name,
         lead.state,
@@ -134,7 +167,7 @@ export default function DynamicResultsTable({
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `leads_export_${Date.now()}.csv`);
+    link.setAttribute("download", `leads_unique_export_${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
