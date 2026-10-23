@@ -653,6 +653,24 @@ export async function* runMapsScraper(
             currentCity: cityValue,
           },
         };
+
+        // 10-second server cooldown rest break after every 500 leads
+        if (totalYielded > 0 && totalYielded % 500 === 0) {
+          yield {
+            type: "status",
+            data: {
+              message: `⏳ Milestone reached (${totalYielded} leads)! Giving system & server a 10s cooldown rest before collecting next batch...`,
+              progress: isUnlimited
+                ? Math.min(95, Math.round(((tIdx + cityYielded / limitPerCity) / targets.length) * 100))
+                : Math.min(100, Math.round((totalYielded / effectiveTotalLimit) * 100)),
+              totalLimit: isUnlimited ? "Unlimited" : effectiveTotalLimit,
+              yielded: totalYielded,
+              cityYielded,
+              currentCity: cityValue,
+            },
+          };
+          await new Promise((r) => setTimeout(r, 10000));
+        }
       }
     }
 

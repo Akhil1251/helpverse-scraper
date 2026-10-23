@@ -261,104 +261,142 @@ export default function ScraperDashboard() {
     setIsMapsInspectorOpen(true); // Automatically open the live Maps viewport window!
 
     abortControllerRef.current = new AbortController();
+    const abortSignal = abortControllerRef.current.signal;
 
-    const payload: ScrapeRequestPayload = {
-      keyword: keyword.trim(),
-      targets: selectedCities,
-      limitPerCity,
-      limit: totalCalculatedLimit,
-      state: firstState,
-      city: firstCity,
-      selectedFields,
-      antiBot: antiBotSettings,
-    };
+    let totalHarvested = leads.length;
+    let nextMilestone = Math.floor(totalHarvested / 500) * 500 + 500;
 
     try {
-      const response = await fetch("/api/scrape", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: abortControllerRef.current.signal,
-      });
+      for (let cIdx = 0; cIdx < selectedCities.length; cIdx++) {
+        if (abortSignal.aborted) break;
 
-      if (!response.ok || !response.body) {
-        throw new Error(`Scraper request failed with status: ${response.status}`);
+        const targetLoc = selectedCities[cIdx];
+        setActiveCity(targetLoc.city);
+        setActiveState(targetLoc.state);
+        setCurrentPincode(targetLoc.city);
+
+        // 10-second rest cooldown break after every 500 leads as requested by user
+        if (totalHarvested >= nextMilestone) {
+          for (let sec = 10; sec > 0; sec--) {
+            if (abortSignal.aborted) break;
+            setStatusMessage(
+              `⏳ 500-Lead Milestone Reached (${totalHarvested} leads)! Server cooldown rest for 10s... Resuming City ${cIdx + 1}/${selectedCities.length} (${targetLoc.city}) in ${sec}s...`
+            );
+            await new Promise((r) => setTimeout(r, 1000));
+          }
+          nextMilestone = Math.floor(totalHarvested / 500) * 500 + 500;
+        }
+
+        if (abortSignal.aborted) break;
+
+        setStatusMessage(
+          `📍 [City ${cIdx + 1}/${selectedCities.length}] Scraping ${targetLoc.city}, ${targetLoc.state} (Target: ${limitPerCity} leads)...`
+        );
+
+        const cityPayload: ScrapeRequestPayload = {
+          keyword: keyword.trim(),
+          targets: [targetLoc],
+          limitPerCity,
+          limit: limitPerCity,
+          state: targetLoc.state,
+          city: targetLoc.city,
+          selectedFields,
+          antiBot: antiBotSettings,
+        };
+
+        try {
+          const response = await fetch("/api/scrape", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(cityPayload),
+            signal: abortSignal,
+          });
+
+          if (!response.ok || !response.body) {
+            console.warn(`City ${targetLoc.city} request responded with status: ${response.status}`);
+            continue;
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder("utf-8");
+          let buffer = "";
+
+          while (true) {
+            if (abortSignal.aborted) break;
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n\n");
+            buffer = lines.pop() || "";
+
+            const newLeadsBatch: ScrapedLead[] = [];
+
+            for (const line of lines) {
+              if (!line.trim().startsWith("data:")) continue;
+              const jsonStr = line.replace(/^data:\s*/, "").trim();
+              try {
+                const event = JSON.parse(jsonStr);
+
+                if (event.type === "lead") {
+                  newLeadsBatch.unshift(event.data);
+                  setCurrentScrapingLead(event.data);
+                  totalHarvested++;
+                  const overallPercent = Math.min(
+                    99,
+                    Math.round((totalHarvested / totalCalculatedLimit) * 100)
+                  );
+                  setProgressPercent(overallPercent);
+                } else if (event.type === "status") {
+                  if (event.data.currentCity) setActiveCity(event.data.currentCity);
+                  if (event.data.currentState) setActiveState(event.data.currentState);
+                  setStatusMessage(`[${cIdx + 1}/${selectedCities.length} ${targetLoc.city}] ${event.data.message}`);
+                } else if (event.type === "info") {
+                  if (event.data.currentPincode) setCurrentPincode(event.data.currentPincode);
+                } else if (event.type === "error") {
+                  setErrorMessage(event.data.message);
+                }
+              } catch (e) {
+                console.warn("Failed to parse SSE event:", jsonStr);
+              }
+            }
+
+            if (newLeadsBatch.length > 0) {
+              setLeads((prev) => {
+                const existingPhones = new Set(
+                  prev.map((l) => normalizePhone(l.phone)).filter(Boolean)
+                );
+                const existingNames = new Set(prev.map((l) => l.name.toLowerCase().trim()));
+                const uniqueIncoming: ScrapedLead[] = [];
+
+                for (const lead of newLeadsBatch) {
+                  const normPhone = normalizePhone(lead.phone);
+                  const normName = lead.name.toLowerCase().trim();
+                  if (normPhone && existingPhones.has(normPhone)) continue;
+                  if (existingNames.has(normName)) continue;
+
+                  if (normPhone) existingPhones.add(normPhone);
+                  existingNames.add(normName);
+                  uniqueIncoming.push(lead);
+                }
+                return [...uniqueIncoming, ...prev];
+              });
+            }
+          }
+        } catch (cityErr: any) {
+          if (cityErr.name === "AbortError" || abortSignal.aborted) {
+            setStatusMessage("Scraping paused by user.");
+            break;
+          }
+          console.warn(`Error on city ${targetLoc.city}, continuing to next:`, cityErr.message);
+        }
       }
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder("utf-8");
-      let buffer = "";
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n\n");
-        buffer = lines.pop() || "";
-
-        const newLeadsBatch: ScrapedLead[] = [];
-
-        for (const line of lines) {
-          if (!line.trim().startsWith("data:")) continue;
-          const jsonStr = line.replace(/^data:\s*/, "").trim();
-          try {
-            const event = JSON.parse(jsonStr);
-
-            if (event.type === "lead") {
-              newLeadsBatch.unshift(event.data);
-              setCurrentScrapingLead(event.data);
-              if (event.data.city) setActiveCity(event.data.city);
-              if (event.data.state) setActiveState(event.data.state);
-            } else if (event.type === "status") {
-              setStatusMessage(event.data.message);
-              if (typeof event.data.progress === "number") {
-                setProgressPercent(event.data.progress);
-              }
-              if (event.data.currentCity) setActiveCity(event.data.currentCity);
-              if (event.data.currentState) setActiveState(event.data.currentState);
-              if (event.data.isDone) {
-                setIsLoading(false);
-              }
-            } else if (event.type === "exhaustion_notice") {
-              setExhaustionNotice(event.data);
-              setIsExhaustionModalOpen(true);
-            } else if (event.type === "info") {
-              setStatusMessage(event.data.message);
-              if (event.data.currentCity) setActiveCity(event.data.currentCity);
-              if (event.data.currentPincode) {
-                setCurrentPincode(event.data.currentPincode);
-              }
-            } else if (event.type === "error") {
-              setErrorMessage(event.data.message);
-              setIsLoading(false);
-            }
-          } catch (e) {
-            console.warn("Failed to parse SSE event:", jsonStr);
-          }
-        }
-
-        if (newLeadsBatch.length > 0) {
-          setLeads((prev) => {
-            const existingPhones = new Set(
-              prev.map((l) => normalizePhone(l.phone)).filter(Boolean)
-            );
-            const existingNames = new Set(prev.map((l) => l.name.toLowerCase().trim()));
-            const uniqueIncoming: ScrapedLead[] = [];
-
-            for (const lead of newLeadsBatch) {
-              const normPhone = normalizePhone(lead.phone);
-              const normName = lead.name.toLowerCase().trim();
-              if (normPhone && existingPhones.has(normPhone)) continue;
-              if (existingNames.has(normName)) continue;
-
-              if (normPhone) existingPhones.add(normPhone);
-              existingNames.add(normName);
-              uniqueIncoming.push(lead);
-            }
-            return [...uniqueIncoming, ...prev];
-          });
-        }
+      if (!abortSignal.aborted) {
+        setProgressPercent(100);
+        setStatusMessage(
+          `🎉 All ${selectedCities.length} cities completed! Extracted a total of ${totalHarvested} verified business leads.`
+        );
       }
     } catch (err: any) {
       if (err.name === "AbortError") {
